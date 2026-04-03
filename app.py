@@ -1,62 +1,63 @@
 import os
-from flask import Flask, request, jsonify
-from flask_cors import CORS
 import torch
-import torch.nn as nn
-import torchvision.models as models
+import gc
+from flask import Flask, request, jsonify
 from PIL import Image
 from utils import get_transform
 from classes import class_names
 
 app = Flask(__name__)
-CORS(app)
 
-MODEL_PATH = "model.pth"
-model = None
+# 🔥 MEMORY OPTIMIZATION
+torch.set_num_threads(1)
+torch.set_grad_enabled(False)
 
-# ✅ Load model only if exists
-if os.path.exists(MODEL_PATH):
-    print("Loading model...")
-    model = models.resnet50(weights=None)
-    model.fc = nn.Linear(model.fc.in_features, len(class_names))
-    model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
-    model.eval()
-else:
-    print("⚠️ model.pth not found. Upload it after deployment.")
-
+model = None  # lazy loading
 transform = get_transform()
 
-# ✅ Health check
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({"message": "API running", "model_loaded": model is not None})
+def load_model():
+    global model
+    if model is None:
+        from model import PlantModel
 
-# ✅ Prediction
+        model = PlantModel(num_classes=len(class_names))
+
+        state_dict = torch.load("model.pth", map_location="cpu")
+        model.load_state_dict(state_dict, strict=False)
+        model.eval()
+
+        del state_dict
+        gc.collect()
+
+
+@app.route("/")
+def home():
+    return "Plant Disease API Running"
+
+
 @app.route("/predict", methods=["POST"])
 def predict():
-    if model is None:
-        return jsonify({
-            "error": "Model not found. Please upload model.pth on server."
-        }), 500
+    load_model()  # 🔥 load only when needed
 
-    try:
-        file = request.files["file"]
-        image = Image.open(file).convert("RGB")
-        image = transform(image).unsqueeze(0)
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"})
 
-        with torch.no_grad():
-            outputs = model(image)
-            probs = torch.softmax(outputs, dim=1)
-            confidence, predicted = torch.max(probs, 1)
+    file = request.files["file"]
+    image = Image.open(file).convert("RGB")
+    image = transform(image).unsqueeze(0)
 
-        return jsonify({
-            "prediction": class_names[predicted.item()],
-            "confidence": float(confidence.item())
-        })
+    with torch.no_grad():
+        outputs = model(image)
+        probs = torch.softmax(outputs, dim=1)
+        confidence, predicted = torch.max(probs, 1)
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "prediction": class_names[predicted.item()],
+        "confidence": float(confidence.item())
+    })
 
 
+# 🔥 REQUIRED FOR RENDER
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
