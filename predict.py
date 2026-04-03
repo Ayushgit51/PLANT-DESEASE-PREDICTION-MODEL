@@ -1,27 +1,33 @@
+# predict.py
 import torch
-import torch.nn as nn
-import torchvision.models as models
 from PIL import Image
-from utils import get_transform
-from classes import class_names
+from utils import get_transforms
+from model import PlantModel
+from classes import classes
 
-# ✅ load model (same as training: ResNet50)
-model = models.resnet50(weights=None)
-model.fc = nn.Linear(model.fc.in_features, len(class_names))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model_path = "model.pth"
 
-model.load_state_dict(torch.load("model.pth", map_location="cpu"))
+
+
+model = PlantModel()
+model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
+model.to(device)
 model.eval()
 
-# ✅ load image
-image_path = "Test/leaf.png"
-image = Image.open(image_path).convert("RGB")
+def predict(image_path):
+    image = Image.open(image_path).convert("RGB")
+    transform = get_transforms()
+    image = transform(image).unsqueeze(0).to(device)
+    
+    with torch.no_grad():
+        outputs = model(image)
+        _, predicted = torch.max(outputs, 1)
+    
+    return classes[predicted.item()]
 
-transform = get_transform()
-image = transform(image).unsqueeze(0)
-
-# ✅ prediction
-with torch.no_grad():
-    outputs = model(image)
-    _, predicted = torch.max(outputs, 1)
-
-print("Prediction:", class_names[predicted.item()])
+if __name__ == "__main__":
+    import sys
+    img_path = sys.argv[1]
+    disease_name = predict(img_path)
+    print(f"Predicted Disease: {disease_name}")

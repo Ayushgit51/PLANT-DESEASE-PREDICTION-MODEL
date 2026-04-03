@@ -1,7 +1,16 @@
+# utils.py
+from PIL import Image
 from torchvision import transforms
 
-def get_transform():
+def get_transforms():
     return transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])
     ])
+
+def load_image(image_path):
+    image = Image.open(image_path).convert("RGB")
+    transform = get_transforms()
+    return transform(image).unsqueeze(0)  # Add batch dimension

@@ -1,63 +1,40 @@
-import os
-import torch
-import gc
 from flask import Flask, request, jsonify
-from PIL import Image
-from utils import get_transform
-from classes import class_names
+import subprocess
+import os
 
 app = Flask(__name__)
 
-# 🔥 MEMORY OPTIMIZATION
-torch.set_num_threads(1)
-torch.set_grad_enabled(False)
-
-model = None  # lazy loading
-transform = get_transform()
-
-def load_model():
-    global model
-    if model is None:
-        from model import PlantModel
-
-        model = PlantModel(num_classes=len(class_names))
-
-        state_dict = torch.load("model.pth", map_location="cpu")
-        model.load_state_dict(state_dict, strict=False)
-        model.eval()
-
-        del state_dict
-        gc.collect()
-
-
-@app.route("/")
+@app.route("/", methods=["GET"])
 def home():
-    return "Plant Disease API Running"
-
+    return "Plant Model API running"
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    load_model()  # 🔥 load only when needed
-
     if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"})
+        return jsonify({"error": "No file uploaded"}), 400
 
     file = request.files["file"]
-    image = Image.open(file).convert("RGB")
-    image = transform(image).unsqueeze(0)
+    temp_path = "temp_image.png"
+    file.save(temp_path)  # save uploaded image temporarily
 
-    with torch.no_grad():
-        outputs = model(image)
-        probs = torch.softmax(outputs, dim=1)
-        confidence, predicted = torch.max(probs, 1)
+    try:
+        # Run your existing predict.py script like in terminal
+        result = subprocess.run(
+            ["python", "predict.py", temp_path],
+            capture_output=True,
+            text=True
+        )
+        os.remove(temp_path)  # remove temp image
 
-    return jsonify({
-        "prediction": class_names[predicted.item()],
-        "confidence": float(confidence.item())
-    })
+        if result.returncode != 0:
+            return jsonify({"error": result.stderr}), 500
 
+        # predict.py prints: Prediction: <class_name>
+        output_line = result.stdout.strip().split(":")[-1].strip()
+        return jsonify({"prediction": output_line})
 
-# 🔥 REQUIRED FOR RENDER
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000, debug=True)
